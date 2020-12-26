@@ -1,13 +1,13 @@
-# AN2Linux - server
-Sync Android notifications encrypted using TLS to a Linux desktop over WiFi, Mobile data or Bluetooth.
+# AN2Linux-mqtt - server
+forked from [https://github.com/rootkiwi/an2linuxserver/](https://github.com/rootkiwi/an2linuxserver/), which displays the notifications on Linux desktop. This fork will publish them to MQTT instead.
+
+Sync Android notifications encrypted using TLS to an MQTT topic over WiFi, Mobile data or Bluetooth.
 
 This is the server part of AN2Linux which will run on your computer.
 
 The Android app can be found here: [https://github.com/rootkiwi/an2linuxclient/](https://github.com/rootkiwi/an2linuxclient/)
 
 ## Dependencies
-I'm using archlinux but I've added here what I think to be the package
-names for debian/ubuntu as well.
 
 * **python (3.4+)**
 ```
