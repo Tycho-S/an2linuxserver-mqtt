@@ -23,13 +23,6 @@ except ImportError as e:
     print(e)
     sys.exit(1)
 try:
-    gi.require_version('Notify', '0.7')
-    from gi.repository import Notify
-except (ImportError, ValueError) as e:
-    print('Dependency missing: libnotify')
-    print(e)
-    sys.exit(1)
-try:
     gi.require_version('GdkPixbuf', '2.0')
     from gi.repository import GdkPixbuf
 except (ImportError, ValueError) as e:
@@ -64,7 +57,7 @@ class Notification:
 
     # list of keywords that trigger notifcation to be ignored
     keywords_to_ignore = None
-    
+
     #regexes of title and contents of notifications to be ignored
     regexes_to_ignore_in_title = None
     regexes_to_ignore_in_content = None
@@ -83,21 +76,13 @@ class Notification:
           and not any(regex.match(self.title) for regex in Notification.regexes_to_ignore_in_title) \
           and not any(regex.match(self.message) for regex in Notification.regexes_to_ignore_in_content):
             Notification.latest_notifications.append(self.notif_hash)
-            self.notif = Notify.Notification.new(self.title, self.message, '')
-            self.notif.set_timeout(notification_timeout_milliseconds)
-            self.notif.set_hint('desktop-entry', GLib.Variant('s', 'an2linux'))
+            print ("Notification Title: ", self.title, ": ", "Notification: ", self.message)
             if self.icon_bytes is not None:
-                pixbuf_loader = GdkPixbuf.PixbufLoader.new()
-                pixbuf_loader.write(self.icon_bytes)
-                pixbuf_loader.close()
-                self.notif.set_image_from_pixbuf(pixbuf_loader.get_pixbuf())
-            try:
-                self.notif.show()
-            except Exception as e:
-                logging.error('(Notification) Error showing notification:' \
-                              ' {}'.format(e));
-                logging.error('Please make sure you have a notification' \
-                              ' server installed on your system')
+                print ("WITH ICON")
+#                pixbuf_loader = GdkPixbuf.PixbufLoader.new()
+#                pixbuf_loader.write(self.icon_bytes)
+#                pixbuf_loader.close()
+#                self.notif.set_image_from_pixbuf(pixbuf_loader.get_pixbuf())
 
 
 class TCPHandler(socketserver.BaseRequestHandler):
@@ -706,7 +691,7 @@ def parse_config_or_create_new():
 
             keywords_to_ignore = config_parser.get('notification', 'keywords_to_ignore')
             Notification.keywords_to_ignore = [kw.strip() for kw in keywords_to_ignore.split(',')]
-            
+
             regexes_to_ignore_in_title = config_parser.get('notification', 'regexes_to_ignore_in_title')
             Notification.regexes_to_ignore_in_title = [re.compile(kw.strip()) for kw in regexes_to_ignore_in_title.split(',')] if regexes_to_ignore_in_title else []
 
@@ -739,7 +724,6 @@ def parse_config_or_create_new():
 
 
 def cleanup(signum, frame):
-    Notify.uninit()
     if tcp_server_enabled:
         tcp_server.shutdown()
         if TCPHandler.active_pairing_connection:
@@ -816,9 +800,6 @@ if __name__ == '__main__':
     if not tcp_server_enabled and not bluetooth_server_enabled:
         logging.error('Neither TCP nor Bluetooth is enabled in your config file at {}'.format(CONF_FILE_PATH))
         sys.exit()
-
-    # initialize libnotify
-    Notify.init('AN2Linux')
 
     SERVER_CERT_DER = ssl.PEM_cert_to_DER_cert(open(CERTIFICATE_PATH, 'r').read())
     sha256 = hashlib.sha256(SERVER_CERT_DER).hexdigest().upper()
