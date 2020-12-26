@@ -1,6 +1,6 @@
 # AN2Linuxserver-MQTT
 
-## NOTE: THIS IS A WORK IN PROGRES. It's not working yet.**
+## NOTE: THIS IS A WORK IN PROGRESS. It's not working yet.
 
 forked from [https://github.com/rootkiwi/an2linuxserver/](https://github.com/rootkiwi/an2linuxserver/), which displays the notifications on Linux desktop. This fork will publish them to MQTT instead.
 
