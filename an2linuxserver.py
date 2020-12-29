@@ -22,13 +22,6 @@ except ImportError as e:
     print('Dependency missing: python-gobject')
     print(e)
     sys.exit(1)
-try:
-    gi.require_version('GdkPixbuf', '2.0')
-    from gi.repository import GdkPixbuf
-except (ImportError, ValueError) as e:
-    print('Dependency missing: GdkPixbuf')
-    print(e)
-    sys.exit(1)
 import threading
 import datetime
 import os
@@ -44,8 +37,10 @@ import termios
 import base64
 import select
 import re
+import paho.mqtt.client as mqtt
+import json
 from collections import deque
-
+from html import escape
 
 class Notification:
 
@@ -76,14 +71,24 @@ class Notification:
           and not any(regex.match(self.title) for regex in Notification.regexes_to_ignore_in_title) \
           and not any(regex.match(self.message) for regex in Notification.regexes_to_ignore_in_content):
             Notification.latest_notifications.append(self.notif_hash)
-            print ("Notification Title: ", self.title, ": ", "Notification: ", self.message)
+            print ("Notification Title: ", self.title, "Notification: ", self.message)
+            messagehtml = escape(self.message)
+            messagehtml = messagehtml.replace ('\n', ' ')
+            now = datetime.datetime.now()
             if self.icon_bytes is not None:
-                print ("WITH ICON")
-#                pixbuf_loader = GdkPixbuf.PixbufLoader.new()
-#                pixbuf_loader.write(self.icon_bytes)
-#                pixbuf_loader.close()
-#                self.notif.set_image_from_pixbuf(pixbuf_loader.get_pixbuf())
+                iconb64 = base64.b64encode(self.icon_bytes)
+                iconb64 = iconb64.decode('ascii')
+                messagearray = { "datetime": now.strftime("%d-%m %H:%m"), "title": self.title, "message": messagehtml, "icon": iconb64}
+            else:
+                messagearray = { "datetime": now.strftime("%d-%m %H:%m"), "title": self.title, "message": messagehtml}
 
+            jsonmessage = json.dumps(messagearray)
+            print (jsonmessage)
+
+            try:
+                client.publish (topic=mqtt_topic, payload=jsonmessage)
+            except Exception as e:
+                logging.error('Error sending message to MQTT broker')
 
 class TCPHandler(socketserver.BaseRequestHandler):
 
@@ -239,9 +244,11 @@ class TCPHandler(socketserver.BaseRequestHandler):
         if include_icon:
             icon_size = struct.unpack('>I', recvall(tls_socket, 4))[0]
             icon_bytes = recvall(tls_socket, icon_size)
+            #Notification(title, message, icon_bytes).show()
             try:
                 Notification(title, message, icon_bytes).show()
             except Exception:
+                print ('\nException Occurred!');
                 Notification(title, message).show()
         else:
             Notification(title, message).show()
@@ -639,7 +646,6 @@ def create_default_config_file_and_exit():
     config_parser.set('bluetooth', '# if you are using android 5.0+ you need to keep this setting off')
     config_parser.set('bluetooth', 'bluetooth_support_kitkat', 'off')
     config_parser.add_section('notification')
-    config_parser.set('notification', '# notification_timeout: display notification for this many seconds')
     config_parser.set('notification', '# set 0 to never expire')
     config_parser.set('notification', '# this setting might be completely ignored by your notification server')
     config_parser.set('notification', 'notification_timeout', '5')
@@ -656,6 +662,15 @@ def create_default_config_file_and_exit():
     config_parser.set('notification', '\n# regexes_to_ignore: do not show notifications who\'s contents or title match the following regexes')
     config_parser.set('notification', 'regexes_to_ignore_in_title', '')
     config_parser.set('notification', 'regexes_to_ignore_in_content', '')
+    config_parser.add_section('mqtt')
+    config_parser.set('mqtt', 'broker_address', '127.0.0.1')
+    config_parser.set('mqtt', '# the IP of the MQTT broker')
+    config_parser.set('mqtt', 'topic', 'notifications/phone')
+    config_parser.set('mqtt', '# the topic to publish to')
+    config_parser.set('mqtt', 'user', 'nwriter')
+    config_parser.set('mqtt', '# the username')
+    config_parser.set('mqtt', 'password', 'pwd')
+    config_parser.set('mqtt', '# the user\'s password')
     with open(CONF_FILE_PATH, 'w') as configfile:
         config_parser.write(configfile)
     logging.info('Created new default configuration file at "{}"'.format(CONF_FILE_PATH))
@@ -698,6 +713,10 @@ def parse_config_or_create_new():
             regexes_to_ignore_in_content = config_parser.get('notification', 'regexes_to_ignore_in_content')
             Notification.regexes_to_ignore_in_content = [re.compile(kw.strip()) for kw in regexes_to_ignore_in_content.split(',')] if regexes_to_ignore_in_content else []
 
+            mqtt_broker_address = config_parser.get('mqtt', 'broker_address')
+            mqtt_topic = config_parser.get('mqtt', 'topic')
+            mqtt_user = config_parser.get('mqtt', 'user')
+            mqtt_password = config_parser.get('mqtt', 'password')
 
             try:
                 bluetooth_support_kitkat = config_parser.getboolean('bluetooth', 'bluetooth_support_kitkat')
@@ -711,7 +730,8 @@ def parse_config_or_create_new():
                 logging.info('Located at: "{}"'.format(CONF_FILE_PATH))
                 logging.info('Then start an2linux again to generate a new config file including this setting')
             return tcp_server_enabled, tcp_port_number,\
-                   bluetooth_server_enabled, bluetooth_support_kitkat, notification_timeout_milliseconds
+                   bluetooth_server_enabled, bluetooth_support_kitkat, notification_timeout_milliseconds, \
+                   mqtt_broker_address, mqtt_topic, mqtt_user, mqtt_password
         except (configparser.Error, ValueError) as e:
             logging.error('Corrupted configuration file: {}'.format(e))
             try:
@@ -733,6 +753,8 @@ def cleanup(signum, frame):
         bluetooth_server.shutdown()
         if BluetoothHandler.active_pairing_connection:
             BluetoothHandler.cancel_pairing = True
+
+    client.disconnect()
 
     sys.exit()
 
@@ -795,7 +817,8 @@ if __name__ == '__main__':
     CONF_FILE_PATH, CERTIFICATE_PATH, RSA_PRIVATE_KEY_PATH, AUTHORIZED_CERTS_PATH, DHPARAM_PATH = init()
 
     tcp_server_enabled, tcp_port_number, bluetooth_server_enabled, bluetooth_support_kitkat,\
-        notification_timeout_milliseconds = parse_config_or_create_new()
+        notification_timeout_milliseconds, mqtt_broker_address, mqtt_topic, mqtt_user, \
+        mqtt_password = parse_config_or_create_new()
 
     if not tcp_server_enabled and not bluetooth_server_enabled:
         logging.error('Neither TCP nor Bluetooth is enabled in your config file at {}'.format(CONF_FILE_PATH))
@@ -859,6 +882,22 @@ if __name__ == '__main__':
         except ImportError as e:
             bluetooth_server_enabled = False
             logging.error('Dependency missing: python-bluez')
+
+    client = mqtt.Client()
+
+# TLS setup later
+#    client.tls_set()
+#    client.tls_insecure_set(value="True")
+
+    client.username_pw_set (username=mqtt_user, password=mqtt_password)
+
+    try:
+        client.connect(host=mqtt_broker_address, port=1883, keepalive=60)
+    except Exception as e:
+        logging.info ('Failed to connect to MQTT broker')
+        sys.exit()
+
+    logging.info ('Connected to MQTT broker')
 
     signal.signal(signal.SIGHUP, cleanup)
     signal.signal(signal.SIGINT, cleanup)
